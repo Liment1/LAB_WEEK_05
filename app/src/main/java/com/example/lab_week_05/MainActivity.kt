@@ -9,6 +9,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.example.lab_week_05.model.ImageData
+import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Call
 import retrofit2.Response
 import retrofit2.Retrofit
@@ -16,9 +18,26 @@ import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.converter.scalars.ScalarsConverterFactory
 
 class MainActivity : AppCompatActivity() {
+    // This interceptor will log the raw network request and response
+    private val loggingInterceptor = HttpLoggingInterceptor().apply {
+        level = HttpLoggingInterceptor.Level.BODY
+    }
+
+
+
+    // Create an OkHttpClient that uses the interceptor
+    private val okHttpClient by lazy {
+        OkHttpClient.Builder()
+            .addInterceptor(loggingInterceptor)
+            .build()
+    }
+
+
+
     private val retrofit by lazy{
         Retrofit.Builder()
             .baseUrl("https://api.thecatapi.com/v1/")
+            .client(okHttpClient)
             .addConverterFactory(MoshiConverterFactory.create())
             .build()
     }
@@ -45,34 +64,58 @@ class MainActivity : AppCompatActivity() {
         getCatImageResponse()
     }
 
-    private fun getCatImageResponse() {
-        val call = catApiService.searchImages(1, "full")
-        call.enqueue(object : retrofit2.Callback<List<ImageData>> {
-            override fun onFailure(call: Call<List<ImageData>>, t: Throwable) {
-                Log.e(MAIN_ACTIVITY, "Failed to get response", t)
-            }
-            override fun onResponse(call: Call<List<ImageData>>, response:
-            Response<List<ImageData>>
-            ) {
-                if(response.isSuccessful){
-                    val image = response.body()
-                    val firstImage = image?.firstOrNull()?.imageUrl.orEmpty()
-                    if (firstImage.isNotBlank()) {
-                        imageLoader.loadImage(firstImage, imageResultView)
+        private fun getCatImageResponse() {
+            val searchCall = catApiService.getRandomImageWithBreed(1, 1)
+
+            searchCall.enqueue(object : retrofit2.Callback<List<ImageData>> {
+                override fun onFailure(call: Call<List<ImageData>>, t: Throwable) {
+                    Log.e(MAIN_ACTIVITY, "Failed to get response", t)
+                }
+                override fun onResponse(call: Call<List<ImageData>>, response: Response<List<ImageData>>) {
+                    if (response.isSuccessful) {
+                        val firstImage = response.body()?.firstOrNull()
+                        val imageId = firstImage?.id
+
+                        if (imageId != null) {
+                            imageLoader.loadImage(firstImage.imageUrl.orEmpty(), imageResultView)
+
+                            val detailsCall = catApiService.getImageDetails(imageId)
+
+                            detailsCall.enqueue(object : retrofit2.Callback<ImageData> {
+                                override fun onFailure(call: Call<ImageData>, t: Throwable) {
+                                    Log.e(MAIN_ACTIVITY, "Failed to get image details", t)
+                                }
+
+                                override fun onResponse(call: Call<ImageData>, response: Response<ImageData>) {
+                                    if (response.isSuccessful) {
+                                        val imageDetails = response.body()
+                                        val breedsObj = imageDetails?.breeds
+
+                                        var resultText = imageDetails?.imageUrl + "\n"
+
+                                        if (!breedsObj.isNullOrEmpty()) {
+                                            val breed = breedsObj.first()
+                                            resultText += "Breed Name: ${breed.name}\n"
+                                            resultText += "Temperament: ${breed.temperament}\n"
+                                        } else {
+                                            resultText += "Breed Name: Not available\n"
+                                            resultText += "Temperament: Not available\n"
+                                        }
+                                        apiResponseView.text = resultText
+                                    } else {
+                                        Log.e(MAIN_ACTIVITY, "Failed to get details response")
+                                    }
+                                }
+                            })
+                        } else {
+                            Log.d(MAIN_ACTIVITY, "Did not receive a valid image ID")
+                        }
                     } else {
-                        Log.d(MAIN_ACTIVITY, "Missing image URL")
+                        Log.e(MAIN_ACTIVITY, "Initial image search was not successful")
                     }
-                    apiResponseView.text = getString(R.string.image_placeholder,
-                        firstImage)
                 }
-                else{
-                    Log.e(MAIN_ACTIVITY, "Failed to get response\n" +
-                            response.errorBody()?.string().orEmpty()
-                    )
-                }
-            }
-        })
-    }
+            })
+        }
 
     companion object{
         const val MAIN_ACTIVITY = "MAIN_ACTIVITY"
